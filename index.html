@@ -56,7 +56,6 @@
     padding: 16px;
     margin-bottom: 24px;
     border: 1px solid var(--line);
-    border-radius: 4px;
   }
   .footer-message label {
     font-size: 13px;
@@ -80,7 +79,6 @@
     padding: 8px 10px;
     resize: vertical;
     line-height: 1.6;
-    border-radius: 4px;
   }
   .footer-message textarea:focus { outline: 1px solid var(--ink); }
 
@@ -90,7 +88,6 @@
     margin-bottom: 24px;
     padding: 20px;
     overflow: hidden;
-    border-radius: 6px;
   }
 
   .category-header {
@@ -126,7 +123,6 @@
     background: var(--warm);
     transition: opacity 0.2s, transform 0.2s;
     min-width: 0;
-    border-radius: 4px;
   }
   .item.dragging { opacity: 0.4; }
   .item.drag-over-top { box-shadow: 0 -3px 0 var(--ink); }
@@ -164,7 +160,6 @@
     cursor: pointer;
     overflow: hidden;
     position: relative;
-    border-radius: 4px;
   }
   .item-photo img { width: 100%; height: 100%; object-fit: cover; }
   .item-photo span { font-size: 10px; color: var(--ink-soft); text-align: center; padding: 2px; }
@@ -179,7 +174,6 @@
     font-size: 13px;
     width: 100%;
     min-width: 0;
-    border-radius: 4px;
   }
   .item-fields input:focus { outline: 1px solid var(--ink); }
 
@@ -218,7 +212,6 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    border-radius: 4px;
   }
   .add-btn:hover { border-color: var(--ink); color: var(--ink); }
 
@@ -233,7 +226,6 @@
     font-size: 14px;
     margin-bottom: 32px;
     transition: all 0.2s;
-    border-radius: 4px;
   }
   .add-category:hover { border-color: var(--ink); color: var(--ink); border-style: solid; }
 
@@ -258,7 +250,6 @@
     cursor: pointer;
     transition: background 0.2s;
     box-shadow: 0 4px 16px rgba(0,0,0,0.2);
-    border-radius: 4px;
   }
   .btn-primary:hover { background: #000; }
   .btn-secondary {
@@ -272,7 +263,6 @@
     letter-spacing: 0.1em;
     cursor: pointer;
     box-shadow: 0 4px 16px rgba(0,0,0,0.08);
-    border-radius: 4px;
   }
 
   .modal {
@@ -294,7 +284,6 @@
     overflow-y: auto;
     padding: 24px;
     position: relative;
-    border-radius: 6px;
   }
   .modal-close {
     position: absolute; top: 12px; right: 12px;
@@ -328,7 +317,6 @@
     color: var(--ink-soft);
     margin-bottom: 24px;
     border-left: 3px solid var(--ink);
-    border-radius: 4px;
   }
   .info b { color: var(--ink); }
 
@@ -381,6 +369,16 @@
 </div>
 
 <canvas id="render-canvas" width="1080" height="1350"></canvas>
+
+<!-- Optimization overlay -->
+<div id="optimize-overlay" style="position:fixed;inset:0;background:rgba(20,18,15,0.92);display:none;align-items:center;justify-content:center;z-index:200;flex-direction:column;color:#ebe7dc;padding:20px;text-align:center;">
+  <div style="font-family:'Archivo',sans-serif;font-size:18px;font-weight:600;letter-spacing:0.1em;margin-bottom:12px;">OPTIMIZING</div>
+  <div id="optimize-status" style="font-size:13px;opacity:0.8;margin-bottom:20px;">最適化中...</div>
+  <div style="width:240px;height:6px;background:rgba(255,255,255,0.15);border-radius:3px;overflow:hidden;">
+    <div id="optimize-bar" style="width:0;height:100%;background:#ebe7dc;transition:width 0.2s;"></div>
+  </div>
+  <div style="font-size:11px;opacity:0.6;margin-top:16px;max-width:280px;line-height:1.5;">写真を圧縮してブラウザの保存容量を節約しています。<br>少々お待ちください。</div>
+</div>
 
 <script>
   // === Embedded assets ===
@@ -679,7 +677,7 @@
         else if (h > max) { w = w * max / h; h = max; }
         canvas.width = w; canvas.height = h;
         canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        callback(canvas.toDataURL('image/jpeg', 0.75));
+        callback(canvas.toDataURL('image/jpeg', 0.70));
       };
       img.src = e.target.result;
     };
@@ -689,7 +687,7 @@
   function uploadPhoto(ci, ii, input) {
     const file = input.files[0];
     if (!file) return;
-    resizeAndStore(file, 400, dataUrl => {
+    resizeAndStore(file, 300, dataUrl => {
       state.categories[ci].items[ii].photo = dataUrl;
       save(); render();
     });
@@ -709,13 +707,13 @@
         const img = new Image();
         img.onload = () => {
           const c = document.createElement('canvas');
-          const max = 400;
+          const max = 300;
           let w = img.width, h = img.height;
           if (w > h && w > max) { h = h * max / w; w = max; }
           else if (h > max) { w = w * max / h; h = max; }
           c.width = w; c.height = h;
           c.getContext('2d').drawImage(img, 0, 0, w, h);
-          resolve(c.toDataURL('image/jpeg', 0.75));
+          resolve(c.toDataURL('image/jpeg', 0.70));
         };
         img.onerror = () => resolve(null);
         img.src = e.target.result;
@@ -1222,8 +1220,118 @@
     document.getElementById('modal').classList.remove('active');
   }
 
+  // === Migration: re-compress existing photos if they're larger than needed ===
+  // Older versions saved at 400px / 75% quality. Re-compress to 300px / 70%
+  // to free up localStorage and let users add more items.
+  const REPACK_VERSION = 'v11-repack-300-70';
+  const REPACK_FLAG_KEY = 'canal-bread-menu-repack-flag';
+  const SIZE_THRESHOLD = 40000; // bytes: only recompress if larger than ~40KB
+
+  function compressDataUrl(dataUrl, maxDim, quality) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let w = img.width, h = img.height;
+        if (w > h && w > maxDim) { h = h * maxDim / w; w = maxDim; }
+        else if (h > maxDim) { w = w * maxDim / h; h = maxDim; }
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = () => resolve(dataUrl); // keep original on failure
+      img.src = dataUrl;
+    });
+  }
+
+  function estimateSize(dataUrl) {
+    if (!dataUrl) return 0;
+    // base64 payload size ≈ 3/4 of the string length (after the comma)
+    const comma = dataUrl.indexOf(',');
+    const b64Len = dataUrl.length - (comma + 1);
+    return Math.floor(b64Len * 0.75);
+  }
+
+  async function repackPhotosIfNeeded() {
+    // Skip if already done with this version
+    if (localStorage.getItem(REPACK_FLAG_KEY) === REPACK_VERSION) return;
+
+    // Collect candidates (photos larger than threshold)
+    const targets = [];
+    state.categories.forEach((cat, ci) => {
+      cat.items.forEach((item, ii) => {
+        if (item.photo && estimateSize(item.photo) > SIZE_THRESHOLD) {
+          targets.push({ ci, ii });
+        }
+      });
+    });
+
+    if (targets.length === 0) {
+      // Nothing to do — mark as done
+      try { localStorage.setItem(REPACK_FLAG_KEY, REPACK_VERSION); } catch (e) {}
+      return;
+    }
+
+    // Show overlay
+    const overlay = document.getElementById('optimize-overlay');
+    const status = document.getElementById('optimize-status');
+    const bar = document.getElementById('optimize-bar');
+    overlay.style.display = 'flex';
+
+    let beforeTotal = 0, afterTotal = 0;
+
+    for (let i = 0; i < targets.length; i++) {
+      const { ci, ii } = targets[i];
+      const item = state.categories[ci].items[ii];
+      if (!item || !item.photo) continue;
+
+      const before = estimateSize(item.photo);
+      beforeTotal += before;
+
+      try {
+        const newDataUrl = await compressDataUrl(item.photo, 300, 0.70);
+        // Only swap if new version is actually smaller
+        if (estimateSize(newDataUrl) < before) {
+          item.photo = newDataUrl;
+        }
+      } catch (e) {
+        console.warn('再圧縮失敗 (continuing)', e);
+      }
+
+      afterTotal += estimateSize(item.photo);
+
+      const pct = Math.round(((i + 1) / targets.length) * 100);
+      bar.style.width = pct + '%';
+      status.textContent = `写真を最適化中... ${i + 1} / ${targets.length}`;
+
+      // Yield to browser to keep UI responsive
+      await new Promise(r => setTimeout(r, 10));
+    }
+
+    // Save in one go after all compression
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      localStorage.setItem(REPACK_FLAG_KEY, REPACK_VERSION);
+    } catch (e) {
+      console.warn('保存に失敗', e);
+    }
+
+    const savedKB = Math.max(0, Math.round((beforeTotal - afterTotal) / 1024));
+    status.textContent = `完了！約 ${savedKB} KB の容量を確保しました`;
+    bar.style.width = '100%';
+
+    // Re-render to reflect updated photo data URLs in the UI
+    render();
+
+    // Hide overlay after a short delay
+    await new Promise(r => setTimeout(r, 1200));
+    overlay.style.display = 'none';
+  }
+
   load();
   render();
+  // Run after the page is interactive so the user sees something first
+  setTimeout(() => { repackPhotosIfNeeded(); }, 100);
 </script>
 </body>
 </html>
